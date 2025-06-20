@@ -1,4 +1,3 @@
-import type { WebContainer } from '@webcontainer/api';
 import { atom } from 'nanostores';
 
 export interface PreviewInfo {
@@ -9,41 +8,45 @@ export interface PreviewInfo {
 
 export class PreviewsStore {
   #availablePreviews = new Map<number, PreviewInfo>();
-  #webcontainer: Promise<WebContainer>;
 
   previews = atom<PreviewInfo[]>([]);
 
-  constructor(webcontainerPromise: Promise<WebContainer>) {
-    this.#webcontainer = webcontainerPromise;
-
-    this.#init();
+  constructor() {
+    /**
+     * No longer needs WebContainer - previews will be managed differently.
+     * In a real implementation, this could connect to a backend service
+     * that manages preview ports and services.
+     */
   }
 
-  async #init() {
-    const webcontainer = await this.#webcontainer;
+  // method to manually add preview (for testing or external integrations)
+  addPreview(port: number, baseUrl: string, ready: boolean = true) {
+    const previewInfo: PreviewInfo = { port, ready, baseUrl };
+    this.#availablePreviews.set(port, previewInfo);
 
-    webcontainer.on('port', (port, type, url) => {
-      let previewInfo = this.#availablePreviews.get(port);
+    const previews = this.previews.get();
+    previews.push(previewInfo);
+    this.previews.set([...previews]);
+  }
 
-      if (type === 'close' && previewInfo) {
-        this.#availablePreviews.delete(port);
-        this.previews.set(this.previews.get().filter((preview) => preview.port !== port));
+  // method to remove preview
+  removePreview(port: number) {
+    this.#availablePreviews.delete(port);
+    this.previews.set(this.previews.get().filter((preview) => preview.port !== port));
+  }
 
-        return;
+  // method to update preview status
+  updatePreview(port: number, ready: boolean, baseUrl?: string) {
+    const previewInfo = this.#availablePreviews.get(port);
+
+    if (previewInfo) {
+      previewInfo.ready = ready;
+
+      if (baseUrl) {
+        previewInfo.baseUrl = baseUrl;
       }
 
-      const previews = this.previews.get();
-
-      if (!previewInfo) {
-        previewInfo = { port, ready: type === 'open', baseUrl: url };
-        this.#availablePreviews.set(port, previewInfo);
-        previews.push(previewInfo);
-      }
-
-      previewInfo.ready = type === 'open';
-      previewInfo.baseUrl = url;
-
-      this.previews.set([...previews]);
-    });
+      this.previews.set([...this.previews.get()]);
+    }
   }
 }

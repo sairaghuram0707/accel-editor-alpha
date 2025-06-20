@@ -8,11 +8,12 @@ $code-font-size: 13px;
 }
 
 .MarkdownContent {
-  line-height: 1.6;
+  line-height: 1.7;
   color: var(--bolt-elements-textPrimary);
+  font-size: 15px;
 
   > *:not(:last-child) {
-    margin-block-end: 16px;
+    margin-block-end: 18px;
   }
 
   :global(.artifact) {
@@ -60,10 +61,21 @@ $code-font-size: 13px;
 
   p {
     white-space: pre-wrap;
+    line-height: 1.7;
+    margin-bottom: 18px;
 
     &:not(:last-of-type) {
       margin-block-start: 0;
-      margin-block-end: 16px;
+      margin-block-end: 18px;
+    }
+
+    &:last-child {
+      margin-bottom: 0;
+    }
+
+    // Make the text flow more naturally for conversational responses
+    &:first-child {
+      margin-top: 0;
     }
   }
 

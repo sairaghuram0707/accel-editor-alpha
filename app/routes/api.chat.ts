@@ -1,5 +1,5 @@
 import { type ActionFunctionArgs } from '@remix-run/cloudflare';
-import { MAX_RESPONSE_SEGMENTS, MAX_TOKENS } from '~/lib/.server/llm/constants';
+import { MAX_RESPONSE_SEGMENTS, getLLMConfig } from '~/lib/.server/llm/config';
 import { CONTINUE_PROMPT } from '~/lib/.server/llm/prompts';
 import { streamText, type Messages, type StreamingOptions } from '~/lib/.server/llm/stream-text';
 import SwitchableStream from '~/lib/.server/llm/switchable-stream';
@@ -27,7 +27,10 @@ async function chatAction({ context, request }: ActionFunctionArgs) {
 
         const switchesLeft = MAX_RESPONSE_SEGMENTS - stream.switches;
 
-        console.log(`Reached max token limit (${MAX_TOKENS}): Continuing message (${switchesLeft} switches left)`);
+        const config = getLLMConfig(context.cloudflare.env);
+        console.log(
+          `Reached max token limit (${config.maxTokens}): Continuing message (${switchesLeft} switches left)`,
+        );
 
         messages.push({ role: 'assistant', content });
         messages.push({ role: 'user', content: CONTINUE_PROMPT });

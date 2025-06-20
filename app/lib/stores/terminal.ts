@@ -1,18 +1,15 @@
-import type { WebContainer, WebContainerProcess } from '@webcontainer/api';
 import { atom, type WritableAtom } from 'nanostores';
 import type { ITerminal } from '~/types/terminal';
-import { newShellProcess } from '~/utils/shell';
-import { coloredText } from '~/utils/terminal';
+import { createScopedLogger } from '~/utils/logger';
+
+const logger = createScopedLogger('TerminalStore');
 
 export class TerminalStore {
-  #webcontainer: Promise<WebContainer>;
-  #terminals: Array<{ terminal: ITerminal; process: WebContainerProcess }> = [];
+  #terminals: Array<{ terminal: ITerminal }> = [];
 
   showTerminal: WritableAtom<boolean> = import.meta.hot?.data.showTerminal ?? atom(false);
 
-  constructor(webcontainerPromise: Promise<WebContainer>) {
-    this.#webcontainer = webcontainerPromise;
-
+  constructor() {
     if (import.meta.hot) {
       import.meta.hot.data.showTerminal = this.showTerminal;
     }
@@ -24,17 +21,19 @@ export class TerminalStore {
 
   async attachTerminal(terminal: ITerminal) {
     try {
-      const shellProcess = await newShellProcess(await this.#webcontainer, terminal);
-      this.#terminals.push({ terminal, process: shellProcess });
+      /**
+       * In a real implementation, this would connect to a backend terminal service.
+       * For now, we just track the terminal instance.
+       */
+      this.#terminals.push({ terminal });
+      logger.info('Terminal attached (mock implementation)');
     } catch (error: any) {
-      terminal.write(coloredText.red('Failed to spawn shell\n\n') + error.message);
-      return;
+      logger.error('Failed to attach terminal:', error.message);
     }
   }
 
   onTerminalResize(cols: number, rows: number) {
-    for (const { process } of this.#terminals) {
-      process.resize({ cols, rows });
-    }
+    // in a real implementation, this would resize backend terminal processes
+    logger.debug(`Terminal resize requested: ${cols}x${rows}`);
   }
 }

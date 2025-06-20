@@ -89,15 +89,37 @@ export class StreamingMessageParser {
           const currentAction = state.currentAction;
 
           if (closeIndex !== -1) {
-            currentAction.content += input.slice(i, closeIndex);
+            const contentSlice = input.slice(i, closeIndex);
+
+            // ENHANCED DEBUG: Track content accumulation per action
+            logger.debug(`=== ACTION CONTENT ACCUMULATION ===`);
+            logger.debug(`ActionID: ${state.actionId - 1}`);
+            logger.debug(`Action object reference: ${JSON.stringify(currentAction)}`);
+            logger.debug(`Adding content slice: "${contentSlice}"`);
+            logger.debug(`Current content before: "${currentAction.content}"`);
+
+            currentAction.content += contentSlice;
+
+            logger.debug(`Current content after: "${currentAction.content}"`);
 
             let content = currentAction.content.trim();
 
+            // DEBUG: Enhanced logging for action content extraction
+            logger.debug(`Action content extraction - ActionID: ${state.actionId - 1}`);
+            logger.debug(`Action type: ${'type' in currentAction ? currentAction.type : 'unknown'}`);
+            logger.debug(`Action filePath: ${'filePath' in currentAction ? currentAction.filePath : 'N/A'}`);
+            logger.debug(`Content slice added: "${contentSlice}"`);
+            logger.debug(`Total content before processing: "${currentAction.content}"`);
+            logger.debug(`Content after trim: "${content}"`);
+
             if ('type' in currentAction && currentAction.type === 'file') {
               content += '\n';
+              logger.debug(`Content after adding newline: "${content}"`);
             }
 
             currentAction.content = content;
+
+            logger.debug(`Action closed - Final content: "${content}"`);
 
             this._options.callbacks?.onActionClose?.({
               artifactId: currentArtifact.id,
@@ -114,7 +136,10 @@ export class StreamingMessageParser {
             });
 
             state.insideAction = false;
+
+            // BUGFIX: Properly reset currentAction to prevent content bleeding between actions
             state.currentAction = { content: '' };
+            logger.debug(`Action state reset - currentAction reset to empty state`);
 
             i = closeIndex + ARTIFACT_ACTION_TAG_CLOSE.length;
           } else {
@@ -131,6 +156,16 @@ export class StreamingMessageParser {
               state.insideAction = true;
 
               state.currentAction = this.#parseActionTag(input, actionOpenIndex, actionEndIndex);
+
+              // ENHANCED DEBUG: Track action object creation
+              logger.debug(`=== NEW ACTION CREATED ===`);
+              logger.debug(`ActionID: ${state.actionId}`);
+              logger.debug(`Action object reference: ${JSON.stringify(state.currentAction)}`);
+              logger.debug(`Action type: ${'type' in state.currentAction ? state.currentAction.type : 'unknown'}`);
+              logger.debug(
+                `Action filePath: ${'filePath' in state.currentAction ? state.currentAction.filePath : 'N/A'}`,
+              );
+              logger.debug(`Initial content: "${state.currentAction.content}"`);
 
               this._options.callbacks?.onActionOpen?.({
                 artifactId: currentArtifact.id,

@@ -1,10 +1,9 @@
-import { WebContainer } from '@webcontainer/api';
 import { map, type MapStore } from 'nanostores';
-import * as nodePath from 'node:path';
 import type { BoltAction } from '~/types/actions';
 import { createScopedLogger } from '~/utils/logger';
 import { unreachable } from '~/utils/unreachable';
 import type { ActionCallbackData } from './message-parser';
+import type { FilesStore } from '~/lib/stores/files';
 
 const logger = createScopedLogger('ActionRunner');
 
@@ -34,13 +33,17 @@ export type ActionStateUpdate =
 type ActionsMap = MapStore<Record<string, ActionState>>;
 
 export class ActionRunner {
-  #webcontainer: Promise<WebContainer>;
   #currentExecutionPromise: Promise<void> = Promise.resolve();
+  #filesStore: FilesStore;
+  #onFilesChanged?: () => void;
 
   actions: ActionsMap = map({});
 
-  constructor(webcontainerPromise: Promise<WebContainer>) {
-    this.#webcontainer = webcontainerPromise;
+  constructor(filesStore: FilesStore, onFilesChanged?: () => void) {
+    this.#filesStore = filesStore;
+    this.#onFilesChanged = onFilesChanged;
+
+    // no longer needs WebContainer - actions are processed differently
   }
 
   addAction(data: ActionCallbackData) {
@@ -84,13 +87,32 @@ export class ActionRunner {
       return;
     }
 
-    this.#updateAction(actionId, { ...action, ...data.action, executed: true });
+    // DEBUG: Enhanced logging for action content
+    logger.debug(`=== RUNNING ACTION ${actionId} ===`);
+    logger.debug(`Action type: ${data.action.type}`);
+
+    if (data.action.type === 'file') {
+      logger.debug(`File path: ${data.action.filePath}`);
+    }
+
+    logger.debug(`Action content length: ${data.action.content?.length || 0}`);
+    logger.debug(`Action content preview: "${data.action.content?.substring(0, 200) || ''}..."`);
+    logger.debug(`Action content full: "${data.action.content || ''}"`);
+
+    /**
+     * BUGFIX: Use data.action content directly - don't merge with potentially stale action content.
+     * The data.action contains the final parsed content from the message parser.
+     */
+    this.#updateAction(actionId, { ...data.action, executed: true });
+
+    logger.debug(`Running action ${actionId}: ${data.action.type}`, data.action);
 
     this.#currentExecutionPromise = this.#currentExecutionPromise
       .then(() => {
         return this.#executeAction(actionId);
       })
       .catch((error) => {
+        logger.error(`Action ${actionId} failed:`, error);
         console.error('Action failed:', error);
       });
   }
@@ -126,27 +148,13 @@ export class ActionRunner {
       unreachable('Expected shell action');
     }
 
-    const webcontainer = await this.#webcontainer;
+    // in a real implementation, this would execute shell commands via a backend service
+    logger.info(`Shell action simulated: ${action.content}`);
 
-    const process = await webcontainer.spawn('jsh', ['-c', action.content], {
-      env: { npm_config_yes: true },
-    });
+    // simulate command execution time
+    await new Promise((resolve) => setTimeout(resolve, 1000));
 
-    action.abortSignal.addEventListener('abort', () => {
-      process.kill();
-    });
-
-    process.output.pipeTo(
-      new WritableStream({
-        write(data) {
-          console.log(data);
-        },
-      }),
-    );
-
-    const exitCode = await process.exit;
-
-    logger.debug(`Process terminated with code ${exitCode}`);
+    logger.debug('Shell action completed (simulated)');
   }
 
   async #runFileAction(action: ActionState) {
@@ -154,33 +162,140 @@ export class ActionRunner {
       unreachable('Expected file action');
     }
 
-    const webcontainer = await this.#webcontainer;
+    const { filePath, content } = action;
 
-    let folder = nodePath.dirname(action.filePath);
+    // ENHANCED DEBUG: Log exact action details at the start of file creation
+    logger.debug(`=== FILE ACTION START ===`);
+    logger.debug(`File path: "${filePath}"`);
+    logger.debug(`Content length: ${content?.length || 0}`);
+    logger.debug(`Content hash (first 50 chars): "${content?.substring(0, 50) || 'EMPTY'}"`);
+    logger.debug(`Full content: "${content || 'EMPTY'}"`);
 
-    // remove trailing slashes
-    folder = folder.replace(/\/+$/g, '');
+    if (!filePath) {
+      logger.error('File path is required for file actions');
+      throw new Error('File path is required for file actions');
+    }
 
-    if (folder !== '.') {
-      try {
-        await webcontainer.fs.mkdir(folder, { recursive: true });
-        logger.debug('Created folder', folder);
-      } catch (error) {
-        logger.error('Failed to create folder\n\n', error);
-      }
+    if (!content) {
+      logger.warn(`File action has empty content for: ${filePath}`);
     }
 
     try {
-      await webcontainer.fs.writeFile(action.filePath, action.content);
-      logger.debug(`File written ${action.filePath}`);
+      logger.info(`Creating/updating file: ${filePath} (${content?.length || 0} characters)`);
+
+      // normalize the file path - ensure it follows the expected directory structure
+      let normalizedPath = filePath.startsWith('/') ? filePath.slice(1) : filePath;
+
+      // ensure the path starts with the work directory structure
+      if (!normalizedPath.startsWith('home/project/')) {
+        normalizedPath = `home/project/${normalizedPath}`;
+      }
+
+      logger.debug(`Normalized file path: ${normalizedPath}`);
+
+      // create any necessary parent directories
+      const pathParts = normalizedPath.split('/');
+      let currentPath = '';
+
+      for (let i = 0; i < pathParts.length - 1; i++) {
+        currentPath += (i > 0 ? '/' : '') + pathParts[i];
+
+        if (currentPath && !this.#filesStore.files.get()[currentPath]) {
+          logger.debug(`Creating directory: ${currentPath}`);
+          this.#filesStore.addFolder(currentPath);
+        }
+      }
+
+      // clean up the content - remove any markdown formatting but preserve actual code structure
+      let cleanContent = content || '';
+
+      // remove markdown code block markers if present - handle various patterns
+      cleanContent = cleanContent.replace(/^```[a-zA-Z]*\n?/, '').replace(/\n?```$/, '');
+      cleanContent = cleanContent.replace(/^```\n?/, '').replace(/\n?```$/, '');
+
+      // remove any remaining stray backticks at the start or end
+      cleanContent = cleanContent.replace(/^`+/, '').replace(/`+$/, '');
+
+      // trim leading/trailing whitespace but preserve internal structure
+      cleanContent = cleanContent.trim();
+
+      // ensure proper line endings
+      if (cleanContent && !cleanContent.endsWith('\n')) {
+        cleanContent += '\n';
+      }
+
+      // validate that we have actual content
+      if (!cleanContent || cleanContent.trim().length === 0) {
+        logger.warn(`File action has empty or invalid content after cleanup for: ${filePath}`);
+        throw new Error(`File content is empty or invalid for: ${filePath}`);
+      }
+
+      // enhanced duplicate content detection
+      const existingFiles = this.#filesStore.files.get();
+      const contentHash = cleanContent.substring(0, 200); // first 200 chars for comparison
+
+      for (const [existingPath, existingFile] of Object.entries(existingFiles)) {
+        if (existingFile?.type === 'file' && existingPath !== normalizedPath) {
+          const existingContentHash = existingFile.content.substring(0, 200);
+
+          if (contentHash === existingContentHash && cleanContent === existingFile.content) {
+            logger.warn(
+              `⚠️ DUPLICATE CONTENT DETECTED! File "${normalizedPath}" has identical content to "${existingPath}"`,
+            );
+            logger.warn(`This may indicate an issue with file generation - each file should have unique content`);
+          }
+        }
+      }
+
+      logger.debug(`File content preview (first 100 chars): ${cleanContent.substring(0, 100)}...`);
+      logger.debug(`File content length: ${cleanContent.length} characters`);
+
+      // add or update the file
+      logger.info(`Adding file to store: ${normalizedPath}`);
+      this.#filesStore.addFile(normalizedPath, cleanContent, false);
+
+      // verify the file was added correctly
+      const addedFile = this.#filesStore.getFile(normalizedPath);
+
+      if (addedFile) {
+        logger.debug(`File verification - stored content length: ${addedFile.content.length}`);
+        logger.debug(`File verification - content matches: ${addedFile.content === cleanContent}`);
+      } else {
+        logger.error(`File was not properly stored: ${normalizedPath}`);
+      }
+
+      // trigger files refresh
+      this.#onFilesChanged?.();
+
+      logger.debug(`File operation completed: ${normalizedPath}`);
     } catch (error) {
-      logger.error('Failed to write file\n\n', error);
+      logger.error(`Failed to write file ${filePath}:`, error);
+      throw error;
     }
   }
 
   #updateAction(id: string, newState: ActionStateUpdate) {
     const actions = this.actions.get();
+    const existingAction = actions[id];
 
-    this.actions.setKey(id, { ...actions[id], ...newState });
+    // debug: log action updates to track content changes
+    const newStateWithContent = newState as any;
+
+    if (newStateWithContent.content !== undefined && existingAction?.content !== newStateWithContent.content) {
+      logger.debug(
+        `Action ${id} content updated from ${existingAction?.content?.length || 0} to ${newStateWithContent.content?.length || 0} chars`,
+      );
+
+      if (
+        existingAction?.content &&
+        newStateWithContent.content &&
+        existingAction.content !== newStateWithContent.content
+      ) {
+        logger.debug(`Content changed - Old: "${existingAction.content.substring(0, 100)}..."`);
+        logger.debug(`Content changed - New: "${newStateWithContent.content.substring(0, 100)}..."`);
+      }
+    }
+
+    this.actions.setKey(id, { ...existingAction, ...newState });
   }
 }
