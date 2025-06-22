@@ -203,10 +203,3 @@ export async function getUrlId(baseId: string): Promise<string> {
     throw new Error('Failed to generate URL ID');
   }
 }
-
-// Legacy compatibility - these functions are no longer needed for PostgreSQL
-// but kept for backward compatibility
-export async function openDatabase(): Promise<any> {
-  logger.warn('openDatabase is deprecated when using PostgreSQL');
-  return { connected: true };
-}
